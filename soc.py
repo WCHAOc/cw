@@ -4,20 +4,38 @@ import socket
 import platform
 import datetime
 import subprocess
+import distro
+import logging
 app = Flask(__name__, template_folder='dist', static_folder='dist/static')
+app.env = 'production'
+app.debug = False
+# 移除flask启动时的开发服务器警告消息
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+# 如果只希望本机能访问到,那么就改成127.0.0.1，0.0.0.0表示绑定到所有网卡[默认不需要改]
+host = "0.0.0.0"
+# web端口
+port = 5000
 
 
+# 获取内存已使用大小和总大小
 def get_total_memory_size():
     memory = psutil.virtual_memory()
     total_size = memory.total
+    used_memory = memory.used
     # 根据内存总大小转换单位
     if total_size < 1024 * 1024 * 1024:
         total_size_str = f"{total_size / (1024 * 1024):.2f} MB"
     else:
         total_size_str = f"{total_size / (1024 * 1024 * 1024):.2f} GB"
-    return total_size_str
+    if used_memory < 1024 * 1024 * 1024:
+        used_size_str = f"{used_memory / (1024 * 1024):.2f} MB"
+    else:
+        used_size_str = f"{used_memory / (1024 * 1024 * 1024):.2f} GB"
+    return total_size_str, used_size_str
 
 
+# 获取内存使用百分比
 def get_memory_usage():
     # 获取系统的内存信息
     memory = psutil.virtual_memory()
@@ -26,21 +44,24 @@ def get_memory_usage():
     return usage_percent
 
 
+# 获取cpu使用率
 def get_cpu_usage():
     # 获取系统的CPU使用率
     cpu_usage = psutil.cpu_percent(interval=1)
     return cpu_usage
 
 
-def convert_unit(bytes):
+# 单位转换函数
+def convert_unit(b):
     units = ['B', 'KB', 'MB', 'GB', 'TB']
     unit_index = 0
-    while bytes >= 1024 and unit_index < len(units)-1:
-        bytes /= 1024
+    while b >= 1024 and unit_index < len(units)-1:
+        b /= 1024
         unit_index += 1
-    return f'{bytes:.2f} {units[unit_index]}'
+    return f'{b:.2f} {units[unit_index]}'
 
 
+# 获取每个网卡上下行
 def get_network_traffic():
     # 获取所有网络接口的流量信息
     net_io = psutil.net_io_counters(pernic=True)
@@ -71,6 +92,7 @@ def get_network_traffic():
     return network_interfaces
 
 
+# 获取网卡地址信息
 def get_networks():
     networks = {}
     # 获取所有网卡的IP地址信息
@@ -83,6 +105,7 @@ def get_networks():
     return networks
 
 
+# 获取根目录使用情况
 def get_root_usage():
     root = '/'
     usage = psutil.disk_usage(root)
@@ -100,6 +123,7 @@ def get_root_usage():
     return root_usage
 
 
+# 获取系统启动时间
 def get_system_uptime():
     boot_time = psutil.boot_time()  # 获取系统启动的时间戳
     uptime = datetime.datetime.now() - datetime.datetime.fromtimestamp(boot_time)  # 计算启动时长
@@ -120,6 +144,7 @@ def get_system_uptime():
     return uptime_str
 
 
+# 获取cpu型号
 def get_cpu_model():
     try:
         if platform.system() == "Windows":
@@ -136,6 +161,27 @@ def get_cpu_model():
         return "Unknown"
 
 
+# 获取每个网卡的mac地址
+def get_network_interface_mac():
+    result = []
+    net_if_addrs = psutil.net_if_addrs()
+
+    for interface, addresses in net_if_addrs.items():
+        has_ip_address = False
+        for address in addresses:
+            if address.family == socket.AF_INET:
+                has_ip_address = True
+                break
+
+        if has_ip_address:
+            for address in addresses:
+                if address.family == psutil.AF_LINK:
+                    mac_address = address.address
+                    result.append({"net": interface, "mac": mac_address})
+
+    return result
+
+
 def get_info():
     # 根目录使用情况
     disk = get_root_usage()
@@ -143,12 +189,13 @@ def get_info():
     hostname = socket.gethostname()
     # 判断当前系统环境
     system = platform.system()
+    # 获取系统详细信息
     os = platform.platform()
-    # 返回系统名
+    # 返回系统平台
     if system == 'Windows':
-        system_type = platform.win32_ver()[0]
-    elif system == 'Linux':
-        system_type = platform.linux_distribution()[0]
+        system_type = distro.name()
+    elif system == "Linux":
+        system_type = distro.name()
     elif system == 'Darwin':
         system_type = 'Mac OS X'
     else:
@@ -157,11 +204,11 @@ def get_info():
     cpu_count = psutil.cpu_count(logical=True)
     # 获取CPU物理核心数
     cpu_phys_count = psutil.cpu_count(logical=False)
-    cpu = get_cpu_model() + "(" + str(cpu_count) + "*" + str(cpu_phys_count) + ")"
+    cpu = get_cpu_model() + "(" + "物理:" + str(cpu_count) + "核" + "*" + "逻辑:" + str(cpu_phys_count) + "核" + ")"
     # 获取CPU使用率
     cpu_usage = get_cpu_usage()
     # 获取内存总大小
-    memory = get_total_memory_size()
+    memory, used_memory = get_total_memory_size()
     # 获取已使用内存大小
     memory_usage = get_memory_usage()
     # 系统运行时长
@@ -170,18 +217,21 @@ def get_info():
     # 网络上下行
     network_traffic = get_network_traffic()
     networks = get_networks()
-    # 获取所有网卡的IP地址信息
+    # 获取所有网卡的mac地址信息
+    macs = get_network_interface_mac()
     message = {
         'hostname': hostname,  # 主机名/计算机名
         'system_type': system_type,  # 操作系统平台
         'os': os,   # 操作系统平台名称
-        'disk': disk,
+        'disk': disk,   # 根目录/c盘/系统盘使用统计
         'cpu': cpu,  # cpu信息
         'cpu_usage': cpu_usage,  # cpu使用率
         'memory': memory,  # 内存大小
+        'used_memory': used_memory,  # 已使用内存大小
         'memory_usage': memory_usage,  # 内存使用率
         'uptime': uptime,  # 系统启动时间
         'networks': networks,  # 网卡信息
+        'macs': macs,  # mac地址
         'network_traffic': network_traffic,  # 每个网卡详细信息
     }
     return message
@@ -194,14 +244,16 @@ def info():
     return jsonify(response)
 
 
+# 跨域
 @app.after_request
-def add_cors_headers(response):
+def cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'  # 设置允许跨域访问的域名
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'  # 允许的请求方法
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'  # 允许的请求头
     return response
 
 
+# 由于前端是vue单页应用
 @app .route('/', defaults={'path': ''})
 @app .route('/<path:path>')
 def catch_all(path):
@@ -209,4 +261,4 @@ def catch_all(path):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0')
+    app.run(host=host, port=port)
