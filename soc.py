@@ -224,8 +224,8 @@ def get_net_speeds():
     net_speeds = []
     for key in key_info:
         if psutil.net_if_addrs().get(key):
-            net_in_speed = (now_recv.get(key) - recv.get(key))
-            net_out_speed = (now_sent.get(key) - sent.get(key))
+            download = (now_recv.get(key) - recv.get(key))
+            upload = (now_sent.get(key) - sent.get(key))
             ip_addresses = []
             net_addrs = psutil.net_if_addrs().get(key)
             for interface in net_addrs:
@@ -236,8 +236,8 @@ def get_net_speeds():
             net_speeds.append({
                 'net': key,
                 'ip': ip_addresses[0],
-                'up': convert_unit(net_in_speed) + '/s',
-                'down': convert_unit(net_out_speed) + '/s'
+                'up': convert_unit(upload) + '/s',
+                'down': convert_unit(download) + '/s'
             })
     return net_speeds
 
