@@ -6,6 +6,7 @@ import datetime
 import subprocess
 import distro
 import logging
+import time
 app = Flask(__name__, template_folder='dist', static_folder='dist/static')
 app.env = 'production'
 app.debug = False
@@ -172,14 +173,73 @@ def get_network_interface_mac():
             if address.family == socket.AF_INET:
                 has_ip_address = True
                 break
-
         if has_ip_address:
             for address in addresses:
                 if address.family == psutil.AF_LINK:
                     mac_address = address.address
                     result.append({"net": interface, "mac": mac_address})
-
     return result
+
+
+# 获取系统tcp连接数
+def get_tcp_connections():
+    try:
+        connections = psutil.net_connections(kind='tcp')
+        established_connections = len([conn for conn in connections if conn.status == 'ESTABLISHED'])
+    except PermissionError:
+        established_connections = 'Permission denied'
+    except psutil.AccessDenied:
+        established_connections = 'Permission denied'
+    return established_connections
+
+
+# 获取系统udp连接数
+def get_udp_connections():
+    try:
+        connections = psutil.net_connections(kind='udp')
+        established_connections = len([conn for conn in connections if conn.status == 'ESTABLISHED'])
+    except PermissionError:
+        established_connections = 'Permission denied'
+    except psutil.AccessDenied:
+        established_connections = 'Permission denied'
+    return established_connections
+
+
+# 获取每个网卡上下行速率
+def get_net_speeds():
+    key_info = psutil.net_io_counters(pernic=True).keys()
+    recv = {}
+    sent = {}
+    for key in key_info:
+        if psutil.net_if_addrs().get(key):
+            recv.setdefault(key, psutil.net_io_counters(pernic=True).get(key).bytes_recv)
+            sent.setdefault(key, psutil.net_io_counters(pernic=True).get(key).bytes_sent)
+    time.sleep(1)
+    now_recv = {}
+    now_sent = {}
+    for key in key_info:
+        if psutil.net_if_addrs().get(key):
+            now_recv.setdefault(key, psutil.net_io_counters(pernic=True).get(key).bytes_recv)
+            now_sent.setdefault(key, psutil.net_io_counters(pernic=True).get(key).bytes_sent)
+    net_speeds = []
+    for key in key_info:
+        if psutil.net_if_addrs().get(key):
+            net_in_speed = (now_recv.get(key) - recv.get(key))
+            net_out_speed = (now_sent.get(key) - sent.get(key))
+            ip_addresses = []
+            net_addrs = psutil.net_if_addrs().get(key)
+            for interface in net_addrs:
+                if interface.family == socket.AF_INET:
+                    ip_addresses.append(interface.address)
+            if not ip_addresses:
+                continue
+            net_speeds.append({
+                'net': key,
+                'ip': ip_addresses[0],
+                'up': convert_unit(net_in_speed) + '/s',
+                'down': convert_unit(net_out_speed) + '/s'
+            })
+    return net_speeds
 
 
 def get_info():
@@ -219,6 +279,12 @@ def get_info():
     networks = get_networks()
     # 获取所有网卡的mac地址信息
     macs = get_network_interface_mac()
+    # tcp连接数
+    tcp = get_tcp_connections()
+    # udp连接数
+    udp = get_udp_connections()
+    # 获取每个网卡速率
+    network_speeds = get_net_speeds()
     message = {
         'hostname': hostname,  # 主机名/计算机名
         'system_type': system_type,  # 操作系统平台
@@ -232,7 +298,10 @@ def get_info():
         'uptime': uptime,  # 系统启动时间
         'networks': networks,  # 网卡信息
         'macs': macs,  # mac地址
-        'network_traffic': network_traffic,  # 每个网卡详细信息
+        'tcp': tcp,  # tcp连接数
+        'udp': udp,  # udp连接数
+        'network_speeds': network_speeds,  # 每个网卡上下行速率
+        'network_traffic': network_traffic,  # 每个网卡总上下行
     }
     return message
 
