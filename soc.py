@@ -1,3 +1,4 @@
+import threading
 import psutil
 from flask import Flask, jsonify, render_template
 import socket
@@ -205,41 +206,53 @@ def get_udp_connections():
     return established_connections
 
 
+# 利用多线程+线程锁的方式，将实时获取网速放在子线程内，net_speeds就为实时速率
+net_speeds = []
+net_speeds_lock = threading.Lock()
+
+
 # 获取每个网卡上下行速率
 def get_net_speeds():
-    key_info = psutil.net_io_counters(pernic=True).keys()
-    recv = {}
-    sent = {}
-    for key in key_info:
-        if psutil.net_if_addrs().get(key):
-            recv.setdefault(key, psutil.net_io_counters(pernic=True).get(key).bytes_recv)
-            sent.setdefault(key, psutil.net_io_counters(pernic=True).get(key).bytes_sent)
-    time.sleep(1)
-    now_recv = {}
-    now_sent = {}
-    for key in key_info:
-        if psutil.net_if_addrs().get(key):
-            now_recv.setdefault(key, psutil.net_io_counters(pernic=True).get(key).bytes_recv)
-            now_sent.setdefault(key, psutil.net_io_counters(pernic=True).get(key).bytes_sent)
-    net_speeds = []
-    for key in key_info:
-        if psutil.net_if_addrs().get(key):
-            download = (now_recv.get(key) - recv.get(key))
-            upload = (now_sent.get(key) - sent.get(key))
-            ip_addresses = []
-            net_addrs = psutil.net_if_addrs().get(key)
-            for interface in net_addrs:
-                if interface.family == socket.AF_INET:
-                    ip_addresses.append(interface.address)
-            if not ip_addresses:
-                continue
-            net_speeds.append({
-                'net': key,
-                'ip': ip_addresses[0],
-                'up': convert_unit(upload) + '/s',
-                'down': convert_unit(download) + '/s'
-            })
-    return net_speeds
+    global net_speeds
+    while True:
+        key_info = psutil.net_io_counters(pernic=True).keys()
+        recv = {}
+        sent = {}
+        for key in key_info:
+            if psutil.net_if_addrs().get(key):
+                recv.setdefault(key, psutil.net_io_counters(pernic=True).get(key).bytes_recv)
+                sent.setdefault(key, psutil.net_io_counters(pernic=True).get(key).bytes_sent)
+        time.sleep(1)
+        now_recv = {}
+        now_sent = {}
+        for key in key_info:
+            if psutil.net_if_addrs().get(key):
+                now_recv.setdefault(key, psutil.net_io_counters(pernic=True).get(key).bytes_recv)
+                now_sent.setdefault(key, psutil.net_io_counters(pernic=True).get(key).bytes_sent)
+        new_net_speeds = []
+        for key in key_info:
+            if psutil.net_if_addrs().get(key):
+                download = (now_recv.get(key) - recv.get(key))
+                upload = (now_sent.get(key) - sent.get(key))
+                ip_addresses = []
+                net_addrs = psutil.net_if_addrs().get(key)
+                for interface in net_addrs:
+                    if interface.family == socket.AF_INET:
+                        ip_addresses.append(interface.address)
+                if not ip_addresses:
+                    continue
+                new_net_speeds.append({
+                    'net': key,
+                    'ip': ip_addresses[0],
+                    'up': convert_unit(upload) + '/s',
+                    'down': convert_unit(download) + '/s'
+                })
+        with net_speeds_lock:
+            net_speeds = new_net_speeds
+
+
+# 开一个线程实时获取速率，不占用主进程
+threading.Thread(target=get_net_speeds).start()
 
 
 def get_info():
@@ -284,7 +297,7 @@ def get_info():
     # udp连接数
     udp = get_udp_connections()
     # 获取每个网卡速率
-    network_speeds = get_net_speeds()
+    network_speeds = net_speeds
     message = {
         'hostname': hostname,  # 主机名/计算机名
         'system_type': system_type,  # 操作系统平台
@@ -306,14 +319,28 @@ def get_info():
     return message
 
 
+# 将所有需要返回的数据也在后台获取，这样请求接口代码就会在0.5s内返回结果
+Info = {}
+
+
+def i():
+    global Info
+    while True:
+        Info = get_info()
+
+
+threading.Thread(target=i).start()
+
+
 # 定义接口，返回总上下行流量和实时上下行流量
 @app.route('/info', methods=['GET'])
 def info():
-    response = get_info()
+    response = Info
     return jsonify(response)
 
 
-# 跨域
+# 开放api "/info", 有前端开发能力可自己开发视图模版，
+# 如果不希望"/info"此接口被跨域请求到，那么注释掉下面的函数修饰符(@app.after_request)
 @app.after_request
 def cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'  # 设置允许跨域访问的域名
@@ -322,7 +349,7 @@ def cors_headers(response):
     return response
 
 
-# 由于前端是vue单页应用
+# 由于前端是vue单页应用+历史路由，所以这里需要动态配置路径，或改用hash模式路由
 @app .route('/', defaults={'path': ''})
 @app .route('/<path:path>')
 def catch_all(path):
