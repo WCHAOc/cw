@@ -8,16 +8,19 @@ import subprocess
 import distro
 import logging
 import time
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+# 如果只希望本机能访问到,那么就改成127.0.0.1，0.0.0.0表示绑定到所有网卡[默认不需要改]
+host = "0.0.0.0"
+# web端口
+port = 5000
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
 app = Flask(__name__, template_folder='dist', static_folder='dist/static')
 app.env = 'production'
 app.debug = False
 # 移除flask启动时的开发服务器警告消息
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
-# 如果只希望本机能访问到,那么就改成127.0.0.1，0.0.0.0表示绑定到所有网卡[默认不需要改]
-host = "0.0.0.0"
-# web端口
-port = 5000
 
 
 # 获取内存已使用大小和总大小
@@ -327,6 +330,7 @@ def i():
     global Info
     while True:
         Info = get_info()
+        time.sleep(0.5)
 
 
 threading.Thread(target=i).start()
