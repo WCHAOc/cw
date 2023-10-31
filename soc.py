@@ -23,20 +23,24 @@ log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
 
+# 单位转换函数
+def convert_unit(b):
+    units = ['B', 'KB', 'MB', 'GB', 'TB']
+    unit_index = 0
+    while b >= 1024 and unit_index < len(units)-1:
+        b /= 1024
+        unit_index += 1
+    return f'{b:.2f} {units[unit_index]}'
+
+
 # 获取内存已使用大小和总大小
 def get_total_memory_size():
     memory = psutil.virtual_memory()
     total_size = memory.total
     used_memory = memory.used
     # 根据内存总大小转换单位
-    if total_size < 1024 * 1024 * 1024:
-        total_size_str = f"{total_size / (1024 * 1024):.2f} MB"
-    else:
-        total_size_str = f"{total_size / (1024 * 1024 * 1024):.2f} GB"
-    if used_memory < 1024 * 1024 * 1024:
-        used_size_str = f"{used_memory / (1024 * 1024):.2f} MB"
-    else:
-        used_size_str = f"{used_memory / (1024 * 1024 * 1024):.2f} GB"
+    total_size_str = convert_unit(total_size)
+    used_size_str = convert_unit(used_memory)
     return total_size_str, used_size_str
 
 
@@ -54,16 +58,6 @@ def get_cpu_usage():
     # 获取系统的CPU使用率
     cpu_usage = psutil.cpu_percent(interval=1)
     return cpu_usage
-
-
-# 单位转换函数
-def convert_unit(b):
-    units = ['B', 'KB', 'MB', 'GB', 'TB']
-    unit_index = 0
-    while b >= 1024 and unit_index < len(units)-1:
-        b >>= 10
-        unit_index += 1
-    return f'{b:.2f} {units[unit_index]}'
 
 
 # 获取每个网卡上下行
