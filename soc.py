@@ -61,7 +61,7 @@ def convert_unit(b):
     units = ['B', 'KB', 'MB', 'GB', 'TB']
     unit_index = 0
     while b >= 1024 and unit_index < len(units)-1:
-        b /= 1024
+        b >>= 10
         unit_index += 1
     return f'{b:.2f} {units[unit_index]}'
 
